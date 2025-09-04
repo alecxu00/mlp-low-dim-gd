@@ -7,21 +7,21 @@
 #SBATCH --ntasks-per-gpu=1
 #SBATCH --mem-per-gpu=48G
 #SBATCH --time=07-00:00:00
-#SBATCH --output=../logs/elu/full_vgg_elu_few_shot_cifar10.log
+#SBATCH --output=../logs/relu/full_vgg_relu_cifar10.log
 
-ACTIVATION="ELU"
+ACTIVATION="ReLU"
 
 INIT="orthogonal"
 INIT_SCALE=1e-1
 
 DATA_TYPE="cifar10"
 NUM_CLASSES=10
-TRAIN_SAMPLES_PER_CLASS=64
+TRAIN_SAMPLES_PER_CLASS=5000
 VAL_SAMPLES_PER_CLASS=1000
 
 NUM_TRIALS=5
 EPOCHS=250
-LR=1e-3
+LR=1e-2
 LOSS="CrossEntropyLoss"
 OPTIMIZER="SGD"
 BATCH_SIZE=128

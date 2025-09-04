@@ -7,10 +7,10 @@
 #SBATCH --ntasks-per-gpu=1
 #SBATCH --mem-per-gpu=48G
 #SBATCH --time=02-00:00:00
-#SBATCH --output=../logs/silu/compressed_L4_silu_rs_fashion_mnist.log
+#SBATCH --output=../logs/relu/compressed_L4_relu_rs_fashion_mnist.log
 
 DEPTH=4
-ACTIVATION="SiLU"
+ACTIVATION="ReLU"
 
 INIT="orthogonal"
 INIT_SCALE=1e-1
@@ -27,7 +27,7 @@ LR=1e-5
 LOSS="MSELoss"
 OPTIMIZER="SGD"
 
-PARENT_SAVE_DIR="../results_random_subspace/"
+PARENT_SAVE_DIR="../results/"
 
 python3 ../train_mlp.py --data_type $DATA_TYPE --data_dim $DATA_DIM \
  --num_classes $NUM_CLASSES --train_samples_per_class $TRAIN_SAMPLES_PER_CLASS --val_samples_per_class $VAL_SAMPLES_PER_CLASS \

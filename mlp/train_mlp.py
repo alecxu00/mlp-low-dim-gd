@@ -17,7 +17,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     # Data 
-    parser.add_argument('--data_type', type=str, default='synthetic', choices=['synthetic', 'fashion_mnist', 'cifar10'])
+    parser.add_argument('--data_type', type=str, default='synthetic', choices=['synthetic', 'fashion_mnist'])
     parser.add_argument('--data_dim', type=int, default=32, help='Dimension of data.')
     parser.add_argument('--data_rank', type=int, default=None, help='Rank of data matrix. Only used when data_type == synthetic')
     parser.add_argument('--whiten', action='store_true', help='Whiten data matrix. Only used when data_type == synthetic.')
@@ -34,7 +34,7 @@ def parse_args():
     parser.add_argument('--hidden_dim', type=int, default=32)
     parser.add_argument('--depth', type=int, default=3)
     parser.add_argument('--activation', type=str, default='ELU', help='Activation function',
-                        choices=['ELU', 'GELU', 'SiLU'])
+                        choices=['ELU', 'GELU', 'SiLU', 'ReLU'])
     parser.add_argument('--compress', action='store_true')
     parser.add_argument('--compress_rank', type=int, default=None)
     parser.add_argument('--subspace_type', type=int, default=None, choices=[1, 2, None], help='Type of ``update subspace`` for compressed model. "None" means random subspace.')

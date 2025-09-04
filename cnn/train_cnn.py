@@ -27,7 +27,7 @@ def parse_args():
     
     # Model
     parser.add_argument('--activation', type=str, default='ELU', help='Activation function',
-                        choices=['ELU', 'GELU', 'SiLU'])
+                        choices=['ELU', 'GELU', 'SiLU', 'ReLU'])
     parser.add_argument('--compress', action='store_true')
     parser.add_argument('--subspace_type', type=int, default=None, choices=[1, 2, None], help='Type of ``update subspace`` for compressed model. "None" means random subspace.')
     parser.add_argument('--compress_rank', type=int, default=None)
