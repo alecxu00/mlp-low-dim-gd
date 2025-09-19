@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #SBATCH --job-name=train_full_mlp
-#SBATCH --account=qingqu1
+#SBATCH --account=girasole1
 #SBATCH --partition=spgpu
 #SBATCH --gpus=1
 #SBATCH --ntasks-per-gpu=1
@@ -23,7 +23,7 @@ DATA_DIM=784
 
 NUM_TRIALS=5
 EPOCHS=1500
-LR=1e-5
+LR=1e-5 # ReLU, GELU, SiLU: LR = 1e-5, ELU: LR = 5e-6
 LOSS="MSELoss"
 OPTIMIZER="SGD"
 
