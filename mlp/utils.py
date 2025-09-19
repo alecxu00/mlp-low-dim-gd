@@ -58,31 +58,39 @@ def get_weight_svds(W_epochs: List[List[np.ndarray]]):
     return [[svd_(W_l) for W_l in W_t] for W_t in W_epochs]
 
 
-def left_right_inits(W_0: List[np.ndarray], G1_0: np.ndarray, r: int, eps: float, comp_type: int = 2):
+def left_right_inits(W_0: List[np.ndarray], G1_0: np.ndarray, r: int, eps: float, comp_type: int = 2, angle: float = 0.0):
     print("Computing initial U and V factors...")
 
     W1_0 = W_0[0]
 
     # Compute orthogonal complement of  N( G1(0) ) and N( G1^T(0) W1(0) ) )
     M = np.concatenate((G1_0, G1_0.T @ W1_0), axis=0) # Vertically stack G1(0) and G1^T(0) W1(0)
-    right_ = svd_(M, full_matrices=False)[-1][:, :2*r] # Initialization for right factor
-    left_ = right_.copy()
+
+    # Get initialization of right factor
+    right_all = svd_(M, full_matrices=False)[-1] # Initialization for right factor
+    right_init = right_all[:, :2*r]
+    if angle > 0: # Make it so the initialized subspace is some angle away from the "good" subspace
+        right_init_orth = right_all[:, 2*r:4*r] # Get 2r-dim space that is orthogonal to "good" subspace
+        right_init = right_init * np.cos(np.deg2rad(angle)) + right_init_orth * np.sin(np.deg2rad(angle))
+    
+    # Get initialization of left factor
+    left_init = right_init.copy()
 
     if comp_type == 1:
-        left_ = W1_0 @ left_
+        left_init = W1_0 @ left_init / eps
         
     elif comp_type == 2:
         for Wl_0 in W_0[:-1]:
-            left_ = Wl_0 @ left_ / eps
+            left_init = Wl_0 @ left_init / eps
 
-    return left_, right_ 
+    return left_init, right_init 
 
-def left_right_inits_2(W_0: List[np.ndarray], E_0: np.ndarray, X: np.ndarray, r: int, eps: float, comp_type: int = 2):
+def left_right_inits_2(W_0: List[np.ndarray], E_0: np.ndarray, X: np.ndarray, r: int, eps: float, comp_type: int = 2, angle: float = 0.0):
     print("Computing initial U and V factors...")
 
     # Compute orthogonal complement of ( N( W_{L:2}^T(0) Gam(0) ) and N( Gam^T(0) W_{L:1} ) )
-    Gam_0 = E_0 @ X.T
-    M1 = Gam_0.copy()
+    Gam_0 = E_0 @ X.T 
+    M1 = Gam_0.copy() # Shape (d, d)
     for Wl_0 in W_0[1:][::-1]:
         M1 = Wl_0.T @ M1
 
@@ -90,21 +98,26 @@ def left_right_inits_2(W_0: List[np.ndarray], E_0: np.ndarray, X: np.ndarray, r:
     for Wl_0 in W_0[::-1]:
         M2 = M2 @ Wl_0
 
-    M = np.concatenate((M1, M2), axis=0)
+    M = np.concatenate((M1, M2), axis=0) # Shape (2d, d)
 
-    # Get initializations
-    right_ = svd_(M, full_matrices=False)[-1][:, :2*r]
-    left_ = right_.copy()
+    # Get initialization of right factor
+    right_all = svd_(M, full_matrices=False)[-1] # Shape (d, d)
+    right_init = right_all[:, :2*r] # Shape (d, 2r)
+    if angle > 0: # Make it so the initialized subspace is some angle away from the "good" subspace
+        right_init_orth = right_all[:, 2*r:4*r] # Get 2r-dim space that is orthogonal to "good" subspace
+        right_init = right_init * np.cos(np.deg2rad(angle)) + right_init_orth * np.sin(np.deg2rad(angle))
+
+    # Get initialization of left factor
+    left_init = right_init.copy()
 
     if comp_type == 1:
-        left_ = W_0[0] @ left_ / eps 
+        left_init = W_0[0] @ left_init / eps 
 
     elif comp_type == 2:
-        left_ = right_.copy()
         for Wl_0 in W_0[:-1]:
-            left_ = Wl_0 @ left_ / eps
+            left_init = Wl_0 @ left_init / eps
 
-    return left_, right_
+    return left_init, right_init
 
 
 def orthcomp_intersection(U1: np.ndarray, U2: np.ndarray):

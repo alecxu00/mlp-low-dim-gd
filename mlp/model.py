@@ -411,7 +411,9 @@ def compress_model(orig_model: MLP,
                    criterion: nn.Module, 
                    train_set: Dataset, 
                    subspace_type: int, 
-                   device: str):
+                   device: str,
+                   comp_type: int = 2,
+                   angle: float = 0.0):
     
     # Single gradient step
     dummy_loader = DataLoader(train_set, batch_size=train_set.data.shape[0], shuffle=False)
@@ -433,7 +435,7 @@ def compress_model(orig_model: MLP,
         W_0 = results['all_weights'][0]
         G1_0 = results['all_grads'][0][0]
         
-        U, V = left_right_inits(W_0, G1_0, rank, init_scale)
+        U, V = left_right_inits(W_0, G1_0, rank, init_scale,comp_type=comp_type, angle=angle)
 
     elif subspace_type == 2:
         results = train(orig_model, 
@@ -456,7 +458,7 @@ def compress_model(orig_model: MLP,
 
         E_0 = ZL_0 - Y
 
-        U, V = left_right_inits_2(W_0, E_0, X, rank, init_scale)
+        U, V = left_right_inits_2(W_0, E_0, X, rank, init_scale, comp_type=comp_type, angle=angle)
 
     elif subspace_type is None: # Use random subspace
         results = train(orig_model, 
@@ -475,7 +477,11 @@ def compress_model(orig_model: MLP,
         V = svd_(np.random.randn(2*rank, W_0[0].shape[1]), full_matrices=False)[-1]
         U = svd_(np.random.randn(W_0[-2].shape[0], 2*rank), full_matrices=False)[0]
 
-
-    model = CompressedMLP2(results['all_weights'][0], U, V, rank, num_classes, orig_model.activation_type, init_method=init_method, init_scale=init_scale)
+    if comp_type == 1:
+        model = CompressedMLP(results['all_weights'][0], U, V, rank, num_classes, orig_model.activation_type, init_method=init_method, init_scale=init_scale)
+    elif comp_type == 2:
+        model = CompressedMLP2(results['all_weights'][0], U, V, rank, num_classes, orig_model.activation_type, init_method=init_method, init_scale=init_scale)
+    else:
+        raise ValueError("Error: invalid compression type.")
 
     return model

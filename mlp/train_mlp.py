@@ -38,6 +38,7 @@ def parse_args():
     parser.add_argument('--compress', action='store_true')
     parser.add_argument('--compress_rank', type=int, default=None)
     parser.add_argument('--subspace_type', type=int, default=None, choices=[1, 2, None], help='Type of ``update subspace`` for compressed model. "None" means random subspace.')
+    parser.add_argument('--subspace_angle', type=float, default=0.0, help='Angle to move the initial U and V factors away from the "true" subspace. Default is 0. Not used if subspace_type is None.')
 
     # Initialization method
     parser.add_argument('--init_method', type=str, default='orthogonal', choices=['orthogonal', 'gaussian', 'uniform'])
@@ -87,6 +88,8 @@ def main():
     compress_ = args.compress
     rank = args.compress_rank if args.compress_rank is not None else K 
     subspace_type = args.subspace_type
+    angle = args.subspace_angle
+    assert 0 <= angle and angle <= 90
 
     init_method = args.init_method
     init_scale = args.init_scale
@@ -133,7 +136,7 @@ def main():
         # Train fully parameterized model
         model = MLP(L, d, d_h, K, act_str, init_method=init_method, init_scale=init_scale)
         if compress_: # Compress the model
-            model = compress_model(model, rank, K, init_method, init_scale, criterion, train_set, subspace_type, device)
+            model = compress_model(model, rank, K, init_method, init_scale, criterion, train_set, subspace_type, device, angle=angle)
 
         # Print number of parameters
         num_params = sum(param.numel() for param in model.parameters() if param.requires_grad)
