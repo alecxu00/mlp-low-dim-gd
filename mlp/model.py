@@ -46,9 +46,21 @@ class CustomSiLU(nn.Module):
     def forward(self, x: torch.Tensor):
         return (self.silu(x) * (x <= 0).float()) + ((x/2) * (x > 0).float())
     
+class LeakySoftplus(nn.Module):
+    def __init__(self, slope=0.01):
+        super(LeakySoftplus, self).__init__()
+        self.softplus = nn.Softplus()
+        self.slope = slope
+    
+    def forward(self, x: torch.Tensor): 
+        out1 = self.slope * x
+        out2 = (1 - self.slope) * ( self.softplus(x) - torch.log(torch.Tensor([2]).to(x.device)) )
+        return out1 + out2
+    
 activations_map = {
     'ReLU': nn.ReLU(),
     'Leaky-ReLU': nn.LeakyReLU(),
+    'Leaky-Softplus': LeakySoftplus(),
     'RReLU': nn.RReLU(),
     'Abs': Abs(),
     'GELU': nn.GELU(),
@@ -60,6 +72,7 @@ activations_map = {
     'CustomSiLU': CustomSiLU(),
     'CELU': nn.CELU(),
     'SmoothAbs': SmoothAbs(),
+    'tanh': nn.Tanh(),
     'Identity': None
 }    
 
@@ -70,6 +83,7 @@ class MLP(nn.Module):
                  hidden_dim: int, 
                  num_classes: int,
                  activation: str,
+                 freeze_last_layer=False,
                  bias=False, 
                  batchnorm=False, 
                  residual=False, 
@@ -83,6 +97,7 @@ class MLP(nn.Module):
         self.hidden_dim = hidden_dim
         self.out_dim = num_classes
         self.bias = bias
+        self.freeze_last_layer = freeze_last_layer
 
         # Number of layers
         assert num_layers > 1
@@ -94,6 +109,10 @@ class MLP(nn.Module):
         self.batchnorm = batchnorm
         self.residual = residual
         self.layers = self._create_layers()
+        
+        if self.freeze_last_layer:
+            for param in self.layers[-1].parameters():
+                param.requires_grad = False
         
         # Initialize weights
         self.init_method = init_method
@@ -137,11 +156,17 @@ class MLP(nn.Module):
     def _init_weights(self):
         print(f"Initializing weights using {self.init_method} method with scale {self.init_scale}")
 
-        for layer in self.layers:
+        for (l, layer) in enumerate(self.layers):
             if isinstance(layer, nn.Linear):
                  # Orthogonal
                 if self.init_method == 'orthogonal':
-                    nn.init.orthogonal_(layer.weight, gain=self.init_scale)
+                    if not self.freeze_last_layer or l < len(self.layers) - 1:
+                        nn.init.orthogonal_(layer.weight, gain=self.init_scale)
+                    else:
+                        #nn.init.orthogonal_(layer.weight, gain=np.sqrt(2.0))
+                        #nn.init.normal_(layer.weight, mean=0.0, std=1.0)
+                        nn.init.uniform_(layer.weight, a=-1.0, b=1.0)
+                        
                 # Gaussian
                 elif self.init_method == 'gaussian':
                     nn.init.normal_(layer.weight, mean=0.0, std=self.init_scale)

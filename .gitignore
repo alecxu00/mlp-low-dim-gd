@@ -2,6 +2,7 @@ mlp/__pycache__/
 mlp/figs/
 mlp/logs/
 mlp/results/
+mlp/.ipynb_checkpoints
 
 cnn/__pycache__/
 cnn/figs/

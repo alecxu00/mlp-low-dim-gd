@@ -47,7 +47,8 @@ def train_epoch(model,
         # Get model gradients
         if return_grads:
             for param in model.parameters():
-                grads.append(param.grad.detach().cpu().numpy()) 
+                if param.grad is not None:
+                    grads.append(param.grad.detach().cpu().numpy()) 
         
         # Update and store model weights
         optimizer.step()
