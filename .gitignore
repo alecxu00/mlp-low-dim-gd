@@ -8,3 +8,10 @@ cnn/__pycache__/
 cnn/figs/
 cnn/logs/
 cnn/results/
+cnn/.ipynb_checkpoints
+
+roberta/__pycache__
+roberta/figs/
+roberta/logs/
+roberta/results/
+roberta/.ipynb_checkpoints
