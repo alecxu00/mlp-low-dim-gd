@@ -4,8 +4,10 @@ from torch.utils.data import Dataset, DataLoader
 from sklearn.cluster import KMeans
 import torchvision.transforms as transforms
 from torchvision.datasets import FashionMNIST
-from utils import whiten, normalize, svd_
+from utils import whiten, normalize, orthogonalize, svd_
 from PIL import Image
+
+from scipy.stats import ortho_group
 
 # Synthetic data
 class SyntheticDataset(Dataset):
@@ -28,29 +30,31 @@ class SyntheticDataset(Dataset):
 def generate_gmm_data(d: int,
                   K: int,
                   N_k: int,
-                  data_rank: int = None,
+                  data_scale: float = 1.0,
                   nu: float = 1.0,
-                  whiten_: bool = True,
+                  whiten_: bool = False,
                   normalize_: bool = False, 
                   batch_size: int = None,
                   shuffle: bool = False):
     
     normalize_ = normalize_ and not whiten_
-
+    
+    N = N_k * K
+    
     # Create data samples
-    p = data_rank if data_rank is not None else d
+    mu_all = np.random.randn(K, d) / np.sqrt(d)
     
-    U = np.linalg.svd(np.random.randn(d, p), full_matrices=False).U
-    mu_all = np.random.randn(K, p)
+    X = np.array( [np.expand_dims(mu_all[k, :], axis=0) + ( nu * np.random.randn(N_k, d) / np.sqrt(d) ) for k in range(K)] )
+    X = np.reshape(X, (N, d)) # Train samples (N, d)
     
-    X = np.array( [(np.sqrt(nu) * np.random.randn(N_k, p) + np.expand_dims(mu_all[k, :], axis=0)) @ U.T for k in range(K)] )
-    X = np.reshape(X, (K * N_k, d)) # Train samples (N, d)
+    #X = np.random.randn(N, d)
+    X /= np.expand_dims(np.linalg.norm(X, axis=1), 1)
     
     # Pre-process if necessary
     if whiten_:
-        X = whiten(X)
-    if normalize_:
-        X /= np.linalg.norm(X, axis=0)
+        X = data_scale * whiten(X)
+    elif normalize_:
+        X = normalize(X)
 
     # Create labels
     y = np.repeat(np.arange(K), N_k, axis=0)
@@ -64,77 +68,45 @@ def generate_gmm_data(d: int,
     dataset = SyntheticDataset(X, Y)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
     
-    return dataset, dataloader
-
-
-def generate_uos_data(d: int,
-                  K: int,
-                  N_k: int,
-                  subspace_rank: int = None,
-                  nu: float = 1.0,
-                  whiten_: bool = True,
-                  normalize_: bool = False, 
-                  batch_size: int = None,
-                  shuffle: bool = False):
+    grad_dataloader = DataLoader(dataset, batch_size=N, shuffle=shuffle)
     
-    normalize_ = normalize_ and not whiten_
+    return dataset, dataloader, grad_dataloader
 
-    # Create data samples
-    r = subspace_rank if subspace_rank is not None else d // K
-    assert r <= d // 2
-    
-    U = svd_(np.random.randn(d, d))[0]
-    U_all = [U[:, k*r:(k+1)*r] for k in range(K)]
-    mu_all = np.zeros((K, d)) #np.random.randn(K, d)
-    
-    X = np.array( [np.random.randn(N_k, r) @ U_all[k].T + np.expand_dims(mu_all[k, :], axis=0) + np.sqrt(nu)*np.random.randn(N_k, d) for k in range(K)] )
-    X = np.reshape(X, (K * N_k, d)) # Train samples (N, d)
-    
-    # Pre-process if necessary
-    if whiten_:
-        X = whiten(X)
-    if normalize_:
-        X /= np.linalg.norm(X, axis=0)
-
-    # Create labels
-    y = np.repeat(np.arange(K), N_k, axis=0)
-    Y = np.eye(K)[y] # Labels (N, K)
-    
-
-    # Create dataloader
-    if batch_size is None:
-        batch_size = X.shape[0]
-
-    dataset = SyntheticDataset(X, Y)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
-    
-    return dataset, dataloader
 
 def generate_random_data(d: int,
                   K: int,
                   N_k: int,
-                  data_rank: int = None,
-                  whiten_: bool = True,
+                  kappa_X: float = 1.0,
+                  orthogonalize_: bool = False,
                   normalize_: bool = False, 
                   batch_size: int = None,
                   shuffle: bool = False):
     
-    normalize_ = normalize_ and not whiten_
-    
-    # Create data samples
-    p = data_rank if data_rank is not None else d
+    normalize_ = normalize_ and not orthogonalize_
+
     
     N = N_k * K
-    X = np.random.randn(N, d)
+    X = np.random.randn(N, d) / np.sqrt(d)
+    #Q = ortho_group.rvs(d)[:, :N]
+    #s = np.ones(N)
     
-    if whiten_:
-        X = whiten(X)
-    if normalize_:
-        X /= np.linalg.norm(X, axis=0)
+    #assert kappa_X >= 1
+    
+    #s[-1] = 1 / kappa_X
+    #X = ortho_group.rvs(N) @ np.diag(s) @ Q.T
+    
+    
+    if orthogonalize_:
+        X = orthogonalize(X) + ( (1 / N) * np.random.randn(*X.shape) )
+    elif normalize_:
+        X = normalize(X)
     
     # Create labels via k-means
-    k_means = KMeans(n_clusters=K)
-    y = k_means.fit_predict(X)
+#     k_means = KMeans(n_clusters=K)
+#     y = k_means.fit_predict(X)
+#     Y = np.eye(K)[y] # Labels (N, K)
+    
+    y = np.repeat(np.arange(K), N_k, axis=0)
     Y = np.eye(K)[y] # Labels (N, K)
     
     # create data loader
@@ -144,7 +116,9 @@ def generate_random_data(d: int,
     dataset = SyntheticDataset(X, Y)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
     
-    return dataset, dataloader
+    grad_dataloader = DataLoader(dataset, batch_size=N, shuffle=shuffle)
+    
+    return dataset, dataloader, grad_dataloader
 
 
 

@@ -2,7 +2,7 @@ import os
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.optim import AdamW
+from torch.optim import AdamW, SGD
 from transformers import get_linear_schedule_with_warmup, get_cosine_schedule_with_warmup
 
 import tqdm
@@ -24,6 +24,7 @@ def parse_args():
     parser.add_argument('--data_dir', type=str, default='/scratch/qingqu_root/qingqu1/alecx/')
     
     # Model
+    parser.add_argument('--model_backbone', type=str, default='roberta-base', choices=['roberta-base', 'roberta-large'])
     parser.add_argument('--num_classifier_layers', type=int, default=2)
     parser.add_argument('--compress', action='store_true')
     parser.add_argument('--subspace_type', type=str, default='gradient', choices=['gradient', 'random'], help='Type of ``update subspace`` for compressed classifier.')
@@ -59,6 +60,7 @@ def main():
     #data_dir = os.path.join(args.data_dir, glue_task_name)
 
     # Network
+    backbone = args.model_backbone
     num_classifier_layers = args.num_classifier_layers
     compress_ = args.compress
     compress_rank = args.compress_rank
@@ -98,7 +100,10 @@ def main():
         metric = GlueMetric(glue_task_name)
 
         # Get fully parameterized model 
-        model = get_model(num_classifier_layers=num_classifier_layers, init_scale=init_scale)
+        model = get_model(
+            backbone=backbone,
+            num_classifier_layers=num_classifier_layers, 
+            init_scale=init_scale)
         model = model.to(device)
 
         # Compress the model if needed
@@ -142,20 +147,11 @@ def main():
         print("Number of trainable parameters = ", num_params)
 
         # Set up optimizer and scheduler
-        optimizer = AdamW(model.parameters(), lr=lr, weight_decay=0.0) #1e-4)
+        #optimizer = AdamW(model.parameters(), lr=lr, weight_decay=0.0) #1e-4)
+        optimizer = SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=1e-4)
 
-        total_steps = epochs * (len(train_loader) // accum_steps) # Calculate total number of optimization steps
-        # scheduler = get_linear_schedule_with_warmup(
-        #     optimizer, 
-        #     0.05 * total_steps, 
-        #     total_steps
-        # ) # Linear schedular
-        scheduler = get_cosine_schedule_with_warmup(
-            optimizer, 
-            0.03 * total_steps, 
-            total_steps, 
-
-        )
+        #total_steps = epochs * (len(train_loader) // accum_steps) # Calculate total number of optimization steps
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=lr/100)
 
         # Train classification head
         results = train(

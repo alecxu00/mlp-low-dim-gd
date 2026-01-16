@@ -10,6 +10,7 @@ cnn/logs/
 cnn/results/
 cnn/.ipynb_checkpoints
 
+roberta/
 roberta/__pycache__
 roberta/figs/
 roberta/logs/

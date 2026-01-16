@@ -4,8 +4,18 @@ import itertools
 from scipy.linalg import sqrtm
 
     
+def decimal_to_str(x: float):
+    mantissa, exp = f"{x:.1e}".split("e")
+    mantissa = mantissa.rstrip("0").rstrip(".")
+    exp = int(exp)
+
+    latex_str = rf'{mantissa} \times 10^{{{exp}}}'
+    return latex_str
+    
+    
 def whiten(X: np.ndarray):
     ''' 
+        Makes the features orthogonal
         X: np.array of shape (N, d)
     '''
     assert X.shape[0] >= X.shape[1]
@@ -18,11 +28,27 @@ def whiten(X: np.ndarray):
     return X_whitened
 
 
+def orthogonalize(X: np.ndarray):
+    ''' 
+        Makes the data samples orthogonal
+        X: np.array of shape (N, d)
+    '''
+    
+    assert X.shape[0] <= X.shape[1]
+
+    Sigma = X @ X.T
+    P = sqrtm(np.linalg.inv(Sigma))
+
+    X_orth = P @ X
+
+    return X_orth
+
+
 def normalize(X: np.ndarray):
     '''
         X: np array of shape (N, d)
     '''
-    return X / np.linalg.norm(X, axis=1)
+    return X / np.expand_dims( np.linalg.norm(X, axis=1), axis=-1 )
 
 
 def svd_(X: np.ndarray, full_matrices: bool = True, compute_uv: bool = True):
@@ -130,11 +156,12 @@ def orthcomp_intersection(U1: np.ndarray, U2: np.ndarray):
     return orthcomp_intersec
 
 
-def small_update_subspace(W1_0: np.ndarray, G1_0: np.ndarray, r: int, eps: float):    
+def small_update_subspace(W1_0: np.ndarray, G1_0: np.ndarray, r: int, eps: float):      
     orthcomp_null_G1_0 = svd_(G1_0)[-1][:, :r] # Orthogonal complement of "null space" of G1_0 (U1)
-    orthcomp_null_G1_W1_0 = svd_(G1_0.T @ W1_0)[-1][:, :r] # Orthogonal complement of "null space" of G1_0.T @ W1_0 (U2)
+    orthcomp_null_G1_W1_0 = svd_(G1_0.T @ W1_0 / eps)[-1][:, :r] # Orthogonal complement of "null space" of G1_0.T @ W1_0 (U2)
     
-    V_null = orthcomp_intersection(orthcomp_null_G1_0, orthcomp_null_G1_W1_0) # Get basis for orthogonal complement of (U1 + U2) ==> (U1_perp) and (U2_perp) ==> N(G1_0) and N(G1_0.T @ W1_0)
+    # Get basis for orthogonal complement of (U1 + U2) ==> (U1_perp) and (U2_perp)
+    V_null = orthcomp_intersection(orthcomp_null_G1_0, orthcomp_null_G1_W1_0) 
     U_null = W1_0 @ V_null / eps
     
     return U_null, V_null

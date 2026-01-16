@@ -137,10 +137,10 @@ def reparameterize_two_layer_classifier(config: RobertaConfig,
     comp_layers_list.append(nn.Dropout(dropout))
 
     # Right subspace factor
-    weights_V = V_init.T if V_init is not None else None
+    V_init = V_init.T if V_init is not None else None
     comp_layers_list.append(init_weight(config.hidden_size, 
                                         rank, 
-                                        weights=weights_V, 
+                                        weights=V_init, 
                                         init_scale=1.0))
 
     # Low-rank weight matrix
@@ -191,6 +191,7 @@ def reparameterize_deep_classifier(num_layers: int,
         # First layer: V factor 
         if l == 0:
             # Right subspace factor 
+            V_init = V_init.T if V_init is not None else None
             comp_layers_list.append(init_weight(config.hidden_size, 
                                                 rank, 
                                                 weights = V_init, 
@@ -268,7 +269,8 @@ def reparameterize_roberta_classifier(model: CustomRobertaForSequenceClassificat
                         
     # More than two layers
     else: 
-        comp_layers_list = reparameterize_deep_classifier(config, 
+        comp_layers_list = reparameterize_deep_classifier(num_layers,
+                                                          config, 
                                                           U_init = U_init, 
                                                           V_init = V_init, 
                                                           rank = rank,
@@ -320,12 +322,13 @@ def compress_roberta_classifier(model: CustomRobertaForSequenceClassification,
 '''
 Get fully parameterized Roberta model 
 '''
-def get_model(num_classifier_layers: int = 2,
+def get_model(backbone: str = 'roberta-base',
+              num_classifier_layers: int = 2,
               init_scale: float = 1.0, 
               freeze_pretrained: bool = True) -> CustomRobertaForSequenceClassification:
     
     # Get original model 
-    model = CustomRobertaForSequenceClassification.from_pretrained('roberta-base', 
+    model = CustomRobertaForSequenceClassification.from_pretrained(backbone, 
                                                                    num_classifier_layers=num_classifier_layers,
                                                                    classifier_init_scale=init_scale)
     

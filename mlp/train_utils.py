@@ -17,6 +17,7 @@ def train_epoch(model,
                 criterion, 
                 device, 
                 scheduler=None,
+                update=True,
                 return_weights=False,
                 return_grads=False,
                 return_outs=False):
@@ -51,7 +52,8 @@ def train_epoch(model,
                     grads.append(param.grad.detach().cpu().numpy()) 
         
         # Update and store model weights
-        optimizer.step()
+        if update:
+            optimizer.step()
         if scheduler is not None:
             scheduler.step()
 
@@ -186,13 +188,13 @@ def train(model,
         train_accs.append(epoch_results['epoch_accuracy'])
 
         # Print training progress
-        logging.info("Finish Epoch {}".format(epoch))
-        logging.info("Train loss: {}, train accuracy: {}".format(epoch_results['epoch_loss'], epoch_results['epoch_accuracy']))
+        #logging.info("Finish Epoch {}".format(epoch))
+        #logging.info("Train loss: {}, train accuracy: {}".format(epoch_results['epoch_loss'], epoch_results['epoch_accuracy']))
         
-        val_results = eval_(model, val_loader, criterion, device) 
-        val_losses.append(val_results['val_loss'])
-        val_accs.append(val_results['val_accuracy'])
-        logging.info("Val loss: {}, val accuracy: {}".format(val_results['val_loss'], val_results['val_accuracy']))
+        #val_results = eval_(model, val_loader, criterion, device) 
+        #val_losses.append(val_results['val_loss'])
+        #val_accs.append(val_results['val_accuracy'])
+        #logging.info("Val loss: {}, val accuracy: {}".format(val_results['val_loss'], val_results['val_accuracy']))
                     
     results = {'train_losses': train_losses,
                'train_accs': train_accs,

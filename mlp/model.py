@@ -84,6 +84,7 @@ class MLP(nn.Module):
                  num_classes: int,
                  activation: str,
                  freeze_last_layer=False,
+                 diff_init_last_layer=False,
                  bias=False, 
                  batchnorm=False, 
                  residual=False, 
@@ -98,7 +99,8 @@ class MLP(nn.Module):
         self.out_dim = num_classes
         self.bias = bias
         self.freeze_last_layer = freeze_last_layer
-
+        self.diff_init_last_layer = diff_init_last_layer
+        
         # Number of layers
         assert num_layers > 1
         self.num_layers = num_layers
@@ -156,26 +158,32 @@ class MLP(nn.Module):
     def _init_weights(self):
         print(f"Initializing weights using {self.init_method} method with scale {self.init_scale}")
 
-        for (l, layer) in enumerate(self.layers):
+        for (l, layer) in enumerate(self.layers):                    
             if isinstance(layer, nn.Linear):
-                 # Orthogonal
-                if self.init_method == 'orthogonal':
-                    if not self.freeze_last_layer or l < len(self.layers) - 1:
+                # Freeze last layer at initialization, so intialize it as something else
+                if l == (len(self.layers) - 1) and ( self.freeze_last_layer or self.diff_init_last_layer ):
+                    #nn.init.normal_(layer.weight, mean=0.0, std=1.0)
+                    nn.init.uniform_(layer.weight, a=-1.0, b=1.0)
+                    #nn.init.orthogonal_(layer.weight, gain=self.init_scale)
+                    #nn.init.eye_(layer.weight)
+                
+                # Initialize all other layers as is
+                else:
+                    # Orthogonal
+                    if self.init_method == 'orthogonal':
                         nn.init.orthogonal_(layer.weight, gain=self.init_scale)
-                    else:
-                        #nn.init.orthogonal_(layer.weight, gain=np.sqrt(2.0))
-                        #nn.init.normal_(layer.weight, mean=0.0, std=1.0)
-                        nn.init.uniform_(layer.weight, a=-1.0, b=1.0)
+                                    
+                    # Gaussian
+                    elif self.init_method == 'gaussian':
+                        nn.init.normal_( layer.weight, mean=0.0, std=self.init_scale / np.sqrt(self.hidden_dim) )
                         
-                # Gaussian
-                elif self.init_method == 'gaussian':
-                    nn.init.normal_(layer.weight, mean=0.0, std=self.init_scale)
-                # Uniform
-                elif self.init_method == 'uniform':
-                    nn.init.uniform_(layer.weight, a = -1 * self.init_scale, b = self.init_scale)
-                # Identity
-                elif self.init_method == 'identity':
-                    nn.init.eye_(layer.weight)
+                    # Uniform
+                    elif self.init_method == 'uniform':
+                        nn.init.uniform_(layer.weight, a = -1 * self.init_scale, b = self.init_scale)
+                        
+                    # Identity
+                    elif self.init_method == 'identity':
+                        nn.init.eye_(layer.weight)
     
 
     # Get weights of model
