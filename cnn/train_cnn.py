@@ -3,8 +3,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from utils import * 
-from model import get_custom_vgg16, compress_vgg16, compress_vgg16_classifier
+from model import get_custom_vgg16, compress_vgg16
 from train_utils import train
 from data import get_cifar10, get_cifar100
 
@@ -27,9 +26,9 @@ def parse_args():
     
     # Model
     parser.add_argument('--activation', type=str, default='ELU', help='Activation function',
-                        choices=['ELU', 'GELU', 'SiLU', 'ReLU'])
+                        choices=['ELU', 'GELU', 'SiLU', 'ReLU', 'LeakySoftplus', 'LeakyReLU'])
     parser.add_argument('--compress', action='store_true')
-    parser.add_argument('--subspace_type', type=int, default=None, choices=[1, 2, None], help='Type of ``update subspace`` for compressed model. "None" means random subspace.')
+    parser.add_argument('--subspace_type', type=str, default='random', choices=['gradient', 'random'], help='Type of ``update subspace`` for compressed model: "gradient" (from the first-layer gradient at initialization) or "random".')
     parser.add_argument('--compress_rank', type=int, default=None)
     parser.add_argument('--pt_conv', action='store_true')
     parser.add_argument('--freeze_conv', action='store_true')
@@ -45,7 +44,6 @@ def parse_args():
     parser.add_argument('--epochs', type=int, default=500, help='Max training epochs')
     parser.add_argument('--loss', type=str, default='MSELoss', choices=['MSELoss', 'CrossEntropyLoss'], help='Training loss')
     parser.add_argument('--lr', type=float, default=1e-5, help='Initial learning rate')
-    parser.add_argument('--optimizer', type=str, default='SGD', choices=['SGD', 'Adam'])
 
     # Save directory
     parser.add_argument('--parent_save_dir', type=str, default='./results/')
@@ -89,7 +87,6 @@ def main():
     epochs = args.epochs
     loss_fn = args.loss
     lr = args.lr
-    opt_type = args.optimizer
 
 
     # Define save dir
@@ -150,8 +147,8 @@ def main():
         print("Number of trainable parameters = ", num_params)
 
         # Train model
-        optimizer = getattr(torch.optim, opt_type)(model.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=lr/100)
+        optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs * len(train_loader), eta_min=lr/100) # Stepped once per optimizer step
         results = train(model, criterion, optimizer, train_loader, val_loader, epochs, device, scheduler=scheduler)
 
         # Get and store results

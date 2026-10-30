@@ -1,11 +1,8 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
-import numpy as np
 
 import tqdm
 import logging
-import psutil
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -22,8 +19,10 @@ def train_epoch(model,
                 return_grads=False,
                 return_outs=False
                 ):
-    
+
     model.train()
+    if not any(p.requires_grad for p in model.features.parameters()):
+        model.features.eval()
 
     running_loss = 0.0
     num_correct = 0
@@ -60,7 +59,7 @@ def train_epoch(model,
         if return_weights:
             for layer in model.classifier:
                 if isinstance(layer, nn.Linear):
-                    weights.append(layer.weight.detach().cpu().numpy())
+                    weights.append(layer.weight.detach().cpu().numpy().copy())
                     
 
         # Compute train performance
@@ -151,7 +150,7 @@ def train(model,
     weights_init = []
     for layer in model.classifier:
         if isinstance(layer, nn.Linear):
-            weights_init.append(layer.weight.detach().cpu().numpy())
+            weights_init.append(layer.weight.detach().cpu().numpy().copy())
     
     # Store weights / grads / outs if needed
     if return_weights:

@@ -1,11 +1,11 @@
 import numpy as np
 import torch
 import torch.nn as nn
-from typing import Union, List
+from typing import List
 from train_utils import train
 from torch.utils.data import DataLoader, Dataset
 
-from utils import left_right_inits, left_right_inits_2, svd_
+from utils import left_right_inits, svd_
 
 class Abs(nn.Module):
     def __init__(self):
@@ -59,8 +59,8 @@ class LeakySoftplus(nn.Module):
     
 activations_map = {
     'ReLU': nn.ReLU(),
-    'Leaky-ReLU': nn.LeakyReLU(),
-    'Leaky-Softplus': LeakySoftplus(),
+    'LeakyReLU': nn.LeakyReLU(),
+    'LeakySoftplus': LeakySoftplus(),
     'RReLU': nn.RReLU(),
     'Abs': Abs(),
     'GELU': nn.GELU(),
@@ -88,8 +88,10 @@ class MLP(nn.Module):
                  bias=False, 
                  batchnorm=False, 
                  residual=False, 
-                 init_method='orthogonal', 
-                 init_scale: float = 1.0):
+                 init_method='orthogonal',
+                 last_layer_init_method='orthogonal',
+                 init_scale: float = 1.0,
+                 last_layer_init_scale: float = 1.0):
 
         super(MLP, self).__init__()
         
@@ -118,7 +120,9 @@ class MLP(nn.Module):
         
         # Initialize weights
         self.init_method = init_method
+        self.last_layer_init_method = last_layer_init_method
         self.init_scale = init_scale
+        self.last_layer_init_scale = last_layer_init_scale
         self._init_weights()
     
 
@@ -162,10 +166,24 @@ class MLP(nn.Module):
             if isinstance(layer, nn.Linear):
                 # Freeze last layer at initialization, so intialize it as something else
                 if l == (len(self.layers) - 1) and ( self.freeze_last_layer or self.diff_init_last_layer ):
-                    #nn.init.normal_(layer.weight, mean=0.0, std=1.0)
-                    nn.init.uniform_(layer.weight, a=-1.0, b=1.0)
-                    #nn.init.orthogonal_(layer.weight, gain=self.init_scale)
-                    #nn.init.eye_(layer.weight)
+                    # Orthogonal
+                    if self.last_layer_init_method == 'orthogonal':
+                        nn.init.orthogonal_(layer.weight, gain=self.last_layer_init_scale) #self.init_scale)
+                                    
+                    # Gaussian
+                    elif self.last_layer_init_method == 'gaussian':
+                        nn.init.normal_( layer.weight, mean=0.0, std=self.last_layer_init_scale) #self.init_scale / np.sqrt(self.hidden_dim) )
+                        
+                    # Uniform
+                    elif self.last_layer_init_method == 'uniform':
+                        nn.init.uniform_(layer.weight, a = -self.last_layer_init_scale, b=self.last_layer_init_scale)
+                        
+                    # Identity
+                    elif self.last_layer_init_method == 'identity':
+                        nn.init.eye_(layer.weight)
+
+                    else:
+                        raise ValueError("Invalid last layer initialization type.")
                 
                 # Initialize all other layers as is
                 else:
@@ -184,22 +202,11 @@ class MLP(nn.Module):
                     # Identity
                     elif self.init_method == 'identity':
                         nn.init.eye_(layer.weight)
+
+                    else:
+                        raise ValueError("Invalid initialization type.")
     
 
-    # Get weights of model
-    def get_weights(self, out_type: str = 'numpy'):
-        weights = []
-        for layer in self.layers:
-            if isinstance(layer, nn.Linear):
-                W_l = layer.weight.detach().cpu()
-                if out_type == 'numpy':
-                    weights.append(W_l.numpy())
-                else:
-                    weights.append(W_l)
-                
-        return weights
-    
-    
     # Forward pass
     def forward(self, x):
         out = x
@@ -224,15 +231,15 @@ class CompressedMLP(nn.Module):
                  init_scale: float = 1.0, 
                  bias: bool = False):
 
-        # Here, "U" and "V" are the U_1 and V_1 factors
+        # Here, "U" and "V" are the U_{L-1} and V_1 factors
 
         super(CompressedMLP, self).__init__()
         
-        self.orig_init_weights = [torch.Tensor(W) for W in orig_init_weights] # Weights of original MLP at initialization
-        self.U = torch.Tensor(U) # Of shape (d, 2r)
+        self.U = torch.Tensor(U) # Of shape (d_h, 2r)
         self.V = torch.Tensor(V) # Of shape (d, 2r)
-        
-        self.d = orig_init_weights[0].shape[1]
+        self.W_L = torch.Tensor(orig_init_weights[-1]) # Of shape (K, d_h)
+
+        self.hidden_dim = orig_init_weights[-1].shape[1] # Input dim of the last layer
         self.num_layers = len(orig_init_weights)
         self.rank = rank
         self.activation = activations_map[activation]
@@ -242,126 +249,10 @@ class CompressedMLP(nn.Module):
         self.init_scale = init_scale
         self.bias = bias
         
-        self.layers_list, self.layers, self.comp_params, self.subspace_params = self._create_layers()
+        self.layers, self.comp_params, self.subspace_params = self._create_layers()
         
     
-    def _create_layers(self):
-        Ul = self.U.clone()
-        Vl = self.V.clone()
-        
-        layers_list = []
-        param_list = []
-        
-        comp_param_list = []
-        subspace_param_list = []
-        # Compressed weights version 1
-        for l in range(self.num_layers - 1):
-            layer = []
-                        
-            # Layer V factor
-            Vl_param = self._create_linear_layer(Vl)
-            layer.append(Vl_param)
-            subspace_param_list.append(Vl_param)
-            
-            # Compressed weights
-            W_comp = nn.Linear(2*self.rank, 2*self.rank, bias=self.bias)
-            self._init_weight(W_comp)
-            
-            comp_param_list.append(W_comp)
-            layer.append(W_comp)
-            
-            # Layer U factor
-            Ul_param = self._create_linear_layer(Ul.transpose(0, 1))
-            layer.append(Ul_param)
-            subspace_param_list.append(Ul_param)
-            
-            # Activation function
-            layer.append(self.activation)
-            
-            # Update subspace
-            Vl = Ul
-            Ul = self.orig_init_weights[l + 1] @ Vl / self.init_scale
-
-            layers_list.append(layer)
-            param_list.extend(layer)
-            
-        
-        # Last layer: keep as is
-        W_L = nn.Linear(self.d, self.num_classes, bias=self.bias)
-        self._init_weight(W_L)
-        
-        layers_list.append([W_L])
-        param_list.append(W_L)
-        comp_param_list.append(W_L)
-        
-        return layers_list, nn.ParameterList(param_list), nn.ParameterList(comp_param_list), nn.ParameterList(subspace_param_list)
-    
-    
-    def _init_weight(self, layer: nn.Linear):
-        if self.init_method == 'orthogonal':
-            nn.init.orthogonal_(layer.weight, gain=self.init_scale)
-            
-        elif self.init_method == 'uniform':
-            nn.init.uniform_(layer.weight, a = -1 * self.init_scale, b = self.init_scale) 
-            
-        elif self.init_method == 'gaussian':
-            nn.init.normal_(layer.weight, std=self.init_scale) 
-            
-    
-    def _create_linear_layer(self, W: torch.Tensor):
-        l = nn.Linear(W.shape[0], W.shape[1], bias=self.bias)
-        with torch.no_grad():
-            l.weight.copy_(W.transpose(0, 1))
-            
-        return l
-        
-    
-    def get_weights(self, out_type: str = 'numpy'):
-        weights = []
-        for (l, comp_Wl) in enumerate(self.layers_list):
-            Vl_2r = comp_Wl[0].data
-            Wl_tilde = comp_Wl[1].weight.detach
-            Ul_2r_T = comp_Wl[2].data
-            
-            W_l = (Vl_2r @ Wl_tilde @ Ul_2r_T).transpose(0, 1)
-            
-            if out_type == 'numpy':
-                W_l = W_l.numpy()
-                
-            weights.append(W_l)
-                       
-        return weights
-    
-    
-    def forward(self, x: torch.Tensor):  
-        out = x
-        for (l, layer) in enumerate(self.layers):
-            out = layer(out)
-            
-            if l == len(self.layers) - 2:
-                hidden_features = out
-        
-        return out, hidden_features
-        
-        
-        
-class CompressedMLP2(CompressedMLP):
-    def __init__(self, 
-                 orig_init_weights: List[np.array],
-                 U: np.array,
-                 V: np.array,
-                 rank: int, 
-                 num_classes: int, 
-                 activation: str, 
-                 init_method: str = 'orthogonal',
-                 init_scale: float = 1.0, 
-                 bias: bool = False):
-        
-        # Here, "U" and "V" are the U_{L-1} and V_1 factors
-        super(CompressedMLP2, self).__init__(orig_init_weights, U, V, rank, num_classes, activation, init_method, init_scale, bias=bias)
-        
     def _create_layers(self):        
-        layers_list = []
         param_list = []
         
         comp_param_list = []
@@ -369,7 +260,6 @@ class CompressedMLP2(CompressedMLP):
         for l in range(self.num_layers - 1):
             layer = []
             
-            # Compressed weights version 2
             if l == 0: 
                 # Network V factor
                 V_param = self._create_linear_layer(self.V)
@@ -408,30 +298,48 @@ class CompressedMLP2(CompressedMLP):
             # Activation function
             layer.append(self.activation)
 
-            layers_list.append(layer)
             param_list.extend(layer)
             
         
         # Last layer: keep as is
-        W_L = nn.Linear(self.d, self.num_classes, bias=self.bias)
-        torch.nn.init.orthogonal_(W_L.weight, gain=self.init_scale) 
-        
-        layers_list.append([W_L])
+        W_L = self._create_linear_layer(self.W_L.transpose(0, 1))
+
         param_list.append(W_L)
         comp_param_list.append(W_L)
         
-        return layers_list, nn.ParameterList(param_list), nn.ParameterList(comp_param_list), nn.ParameterList(subspace_param_list)
+        return nn.ParameterList(param_list), nn.ParameterList(comp_param_list), nn.ParameterList(subspace_param_list)
     
+    
+    def _init_weight(self, layer: nn.Linear):
+        if self.init_method == 'orthogonal':
+            nn.init.orthogonal_(layer.weight, gain=self.init_scale)
+            
+        elif self.init_method == 'uniform':
+            nn.init.uniform_(layer.weight, a = -1 * self.init_scale, b = self.init_scale) 
+            
+        elif self.init_method == 'gaussian':
+            nn.init.normal_(layer.weight, std=self.init_scale)
+
+        else:
+            raise ValueError("Invalid initialization type.")
+            
+    
+    def _create_linear_layer(self, W: torch.Tensor):
+        l = nn.Linear(W.shape[0], W.shape[1], bias=self.bias)
+        with torch.no_grad():
+            l.weight.copy_(W.transpose(0, 1))
+            
+        return l
+        
     
     def forward(self, x: torch.Tensor):  
         out = x
-        
         for (l, layer) in enumerate(self.layers):
             out = layer(out)
+            
             if l == len(self.layers) - 2:
                 hidden_features = out
-            
- 
+        
         return out, hidden_features
 
 
@@ -443,9 +351,8 @@ def compress_model(orig_model: MLP,
                    init_scale: float,
                    criterion: nn.Module, 
                    train_set: Dataset, 
-                   subspace_type: int, 
+                   subspace_type: str,
                    device: str,
-                   comp_type: int = 2,
                    angle: float = 0.0):
     
     # Single gradient step
@@ -453,7 +360,7 @@ def compress_model(orig_model: MLP,
     dummy_optimizer = torch.optim.SGD(orig_model.parameters())
         
     # Subspace type
-    if subspace_type == 1:
+    if subspace_type == 'gradient':
         results = train(orig_model, 
                         criterion, 
                         dummy_optimizer, 
@@ -468,32 +375,9 @@ def compress_model(orig_model: MLP,
         W_0 = results['all_weights'][0]
         G1_0 = results['all_grads'][0][0]
         
-        U, V = left_right_inits(W_0, G1_0, rank, init_scale,comp_type=comp_type, angle=angle)
+        U, V = left_right_inits(W_0, G1_0, rank, init_scale, angle=angle)
 
-    elif subspace_type == 2:
-        results = train(orig_model, 
-                        criterion, 
-                        dummy_optimizer, 
-                        dummy_loader, 
-                        dummy_loader, 
-                        1, 
-                        device, 
-                        return_weights=True, 
-                        return_grads=False, 
-                        return_outs=True)
-        
-        W_0 = results['all_weights'][0]
-
-        X, _ = next(iter(dummy_loader)) # Data matrix
-        X = np.array(X).T
-        Y = train_set.targets.T # Label matrix
-        ZL_0 = results['all_outs'][0].T # Model output of first epoch
-
-        E_0 = ZL_0 - Y
-
-        U, V = left_right_inits_2(W_0, E_0, X, rank, init_scale, comp_type=comp_type, angle=angle)
-
-    elif subspace_type is None: # Use random subspace
+    elif subspace_type == 'random':
         results = train(orig_model, 
                         criterion, 
                         dummy_optimizer, 
@@ -510,11 +394,9 @@ def compress_model(orig_model: MLP,
         V = svd_(np.random.randn(2*rank, W_0[0].shape[1]), full_matrices=False)[-1]
         U = svd_(np.random.randn(W_0[-2].shape[0], 2*rank), full_matrices=False)[0]
 
-    if comp_type == 1:
-        model = CompressedMLP(results['all_weights'][0], U, V, rank, num_classes, orig_model.activation_type, init_method=init_method, init_scale=init_scale)
-    elif comp_type == 2:
-        model = CompressedMLP2(results['all_weights'][0], U, V, rank, num_classes, orig_model.activation_type, init_method=init_method, init_scale=init_scale)
     else:
-        raise ValueError("Error: invalid compression type.")
+        raise ValueError("Invalid subspace type.")
+
+    model = CompressedMLP(results['all_weights'][0], U, V, rank, num_classes, orig_model.activation_type, init_method=init_method, init_scale=init_scale)
 
     return model

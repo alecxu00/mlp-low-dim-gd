@@ -3,16 +3,19 @@ mlp/figs/
 mlp/logs/
 mlp/results/
 mlp/.ipynb_checkpoints
+mlp/scripts/re-trainings/
 
 cnn/__pycache__/
 cnn/figs/
 cnn/logs/
 cnn/results/
 cnn/.ipynb_checkpoints
+cnn/scripts/re-trainings/
 
-roberta/
-roberta/__pycache__
-roberta/figs/
-roberta/logs/
-roberta/results/
-roberta/.ipynb_checkpoints
+flop_comparison/__pycache__/
+flop_comparison/tests/__pycache__/
+flop_comparison/logs/
+flop_comparison/results/
+flop_comparison/.pytest_cache/
+
+CLAUDE.md

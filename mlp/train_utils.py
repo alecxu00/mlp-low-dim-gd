@@ -1,11 +1,8 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
-import numpy as np
 
 import tqdm
 import logging
-import psutil
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -54,15 +51,13 @@ def train_epoch(model,
         # Update and store model weights
         if update:
             optimizer.step()
-        if scheduler is not None:
-            scheduler.step()
+            if scheduler is not None:
+                scheduler.step()
 
         if return_weights:
             for layer in model.layers:
                 if isinstance(layer, nn.Linear):
-                    weights.append(layer.weight.detach().cpu().numpy())
-                elif isinstance(layer, nn.Parameter):
-                    weights.append(layer.data.cpu().numpy())
+                    weights.append(layer.weight.detach().cpu().numpy().copy())
                     
 
         # Compute train performance
@@ -149,9 +144,7 @@ def train(model,
     weights_init = []
     for layer in model.layers:
         if isinstance(layer, nn.Linear):
-            weights_init.append(layer.weight.detach().cpu().numpy())
-        elif isinstance(layer, nn.Parameter):
-            weights_init.append(layer.data.cpu().numpy())
+            weights_init.append(layer.weight.detach().cpu().numpy().copy())
     
     
     if return_weights:
@@ -188,13 +181,13 @@ def train(model,
         train_accs.append(epoch_results['epoch_accuracy'])
 
         # Print training progress
-        #logging.info("Finish Epoch {}".format(epoch))
-        #logging.info("Train loss: {}, train accuracy: {}".format(epoch_results['epoch_loss'], epoch_results['epoch_accuracy']))
+        logging.info("Finish Epoch {}".format(epoch))
+        logging.info("Train loss: {}, train accuracy: {}".format(epoch_results['epoch_loss'], epoch_results['epoch_accuracy']))
         
-        #val_results = eval_(model, val_loader, criterion, device) 
-        #val_losses.append(val_results['val_loss'])
-        #val_accs.append(val_results['val_accuracy'])
-        #logging.info("Val loss: {}, val accuracy: {}".format(val_results['val_loss'], val_results['val_accuracy']))
+        val_results = eval_(model, val_loader, criterion, device) 
+        val_losses.append(val_results['val_loss'])
+        val_accs.append(val_results['val_accuracy'])
+        logging.info("Val loss: {}, val accuracy: {}".format(val_results['val_loss'], val_results['val_accuracy']))
                     
     results = {'train_losses': train_losses,
                'train_accs': train_accs,

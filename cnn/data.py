@@ -1,5 +1,5 @@
 import numpy as np
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 from torchvision.datasets import CIFAR10, CIFAR100
 from PIL import Image
@@ -23,7 +23,7 @@ class PartialCIFAR10(CIFAR10):
         all_labels = []
         
         for k in range(K):
-            idx = np.random.randint(low=0, high=np.count_nonzero(self.targets == k), size=(N_k,))
+            idx = np.random.choice(np.count_nonzero(self.targets == k), size=N_k, replace=False)
             all_data.append(self.data[self.targets == k][idx])
             all_labels.append(np.ones(N_k, dtype=np.uint8) * k)
 
@@ -79,7 +79,7 @@ def get_cifar10(K: int,
 
 # CIFAR-100 
 class PartialCIFAR100(CIFAR100):
-    def __init__(self, root, K, N_k, one_hot=True, train=True, transform=None, download=True, **kwargs):
+    def __init__(self, root, K, N_k, one_hot=True, train=True, transform=None, download=True, permute=True, **kwargs):
         super().__init__(root=root, train=train, transform=transform, download=download, **kwargs)
 
         assert K > 0 and K <= 100
@@ -93,7 +93,7 @@ class PartialCIFAR100(CIFAR100):
         all_labels = []
         
         for k in range(K):
-            idx = np.random.randint(low=0, high=np.count_nonzero(self.targets == k), size=(N_k,))
+            idx = np.random.choice(np.count_nonzero(self.targets == k), size=N_k, replace=False)
             all_data.append(self.data[self.targets == k][idx])
             all_labels.append(np.ones(N_k, dtype=np.uint8) * k)
 
@@ -101,6 +101,11 @@ class PartialCIFAR100(CIFAR100):
         self.targets = np.concatenate(all_labels, dtype=np.uint8)
         if one_hot:
             self.targets = np.eye(K)[self.targets]
+
+        if permute:
+            perm = np.random.choice(np.arange(N_k * K), replace=False, size=N_k * K)
+            self.data = self.data[perm, ...]
+            self.targets = self.targets[perm, ...]
             
     def __getitem__(self, idx):
         img, target = self.data[idx], self.targets[idx]

@@ -3,10 +3,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from utils import * 
-from model import MLP, CompressedMLP, CompressedMLP2, compress_model
+from model import MLP, compress_model
 from train_utils import train
-from data import generate_gmm_data, get_fashion_mnist
+from data import get_fashion_mnist
 
 import tqdm
 import argparse
@@ -17,11 +16,8 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     # Data 
-    parser.add_argument('--data_type', type=str, default='synthetic', choices=['synthetic', 'fashion_mnist'])
+    parser.add_argument('--data_type', type=str, default='fashion_mnist', choices=['fashion_mnist'])
     parser.add_argument('--data_dim', type=int, default=32, help='Dimension of data.')
-    parser.add_argument('--data_rank', type=int, default=None, help='Rank of data matrix. Only used when data_type == synthetic')
-    parser.add_argument('--whiten', action='store_true', help='Whiten data matrix. Only used when data_type == synthetic.')
-    parser.add_argument('--normalize', action='store_true', help='Make data samples unit norm. Only used when data_type == synthetic and whiten_ is false.')
 
 
     parser.add_argument('--num_classes', type=int, default=10)
@@ -34,11 +30,11 @@ def parse_args():
     parser.add_argument('--hidden_dim', type=int, default=32)
     parser.add_argument('--depth', type=int, default=3)
     parser.add_argument('--activation', type=str, default='ELU', help='Activation function',
-                        choices=['ELU', 'GELU', 'SiLU', 'ReLU'])
+                        choices=['ELU', 'GELU', 'SiLU', 'ReLU', 'LeakySoftplus'])
     parser.add_argument('--compress', action='store_true')
     parser.add_argument('--compress_rank', type=int, default=None)
-    parser.add_argument('--subspace_type', type=int, default=None, choices=[1, 2, None], help='Type of ``update subspace`` for compressed model. "None" means random subspace.')
-    parser.add_argument('--subspace_angle', type=float, default=0.0, help='Angle to move the initial U and V factors away from the "true" subspace. Default is 0. Not used if subspace_type is None.')
+    parser.add_argument('--subspace_type', type=str, default='random', choices=['gradient', 'random'], help='Type of ``update subspace`` for compressed model: "gradient" (from the first-layer gradient at initialization) or "random".')
+    parser.add_argument('--subspace_angle', type=float, default=0.0, help='Angle to move the initial U and V factors away from the "true" subspace. Default is 0. Not used if subspace_type is random.')
 
     # Initialization method
     parser.add_argument('--init_method', type=str, default='orthogonal', choices=['orthogonal', 'gaussian', 'uniform'])
@@ -51,8 +47,6 @@ def parse_args():
     parser.add_argument('--epochs', type=int, default=500, help='Max training epochs')
     parser.add_argument('--loss', type=str, default='MSELoss', choices=['MSELoss', 'CrossEntropyLoss'], help='Training loss')
     parser.add_argument('--lr', type=float, default=1e-5, help='Initial learning rate')
-    parser.add_argument('--optimizer', type=str, default='SGD', choices=['SGD', 'Adam'])
-    parser.add_argument('--save_outs', action='store_true')
 
     # Save directory
     parser.add_argument('--parent_save_dir', type=str, default='./results/')
@@ -71,9 +65,6 @@ def main():
     # Input data
     data_type = args.data_type
     d = args.data_dim
-    p = args.data_rank
-    whiten_ = args.whiten
-    normalize_ = args.normalize
     K = args.num_classes
     N_k = args.train_samples_per_class
     N = N_k * K
@@ -101,9 +92,6 @@ def main():
     epochs = args.epochs
     loss_fn = args.loss
     lr = args.lr
-    opt_type = args.optimizer
-
-    save_outs = args.save_outs
 
 
 
@@ -114,21 +102,12 @@ def main():
     all_val_losses = np.zeros((num_trials, epochs))
     all_val_accs = np.zeros((num_trials, epochs))
 
-    if save_outs:
-        all_outs = np.zeros((num_trials, epochs, N, K))
-
     for i in tqdm.tqdm(range(num_trials)):
         print("===== TRIAL {} =====".format(i + 1))
 
         # Generate train samples
-        if data_type == 'synthetic':
-            train_set, train_loader = generate_gmm_data(d, K, N_k, data_rank=p, whiten_=whiten_, normalize_=normalize_, batch_size=batch_size)
-            _, val_loader = generate_gmm_data(d, K, N_k_val, data_rank=p, whiten_=whiten_, normalize_=normalize_, batch_size=batch_size)
-        elif data_type == 'fashion_mnist':
-            train_set, train_loader = get_fashion_mnist(K, N_k, data_dir, batch_size=batch_size, train=True, shuffle=shuffle)
-            _, val_loader = get_fashion_mnist(K, N_k_val, data_dir, batch_size=batch_size, train=False, shuffle=shuffle)
-        else:
-            raise ValueError("Invalid dataset.")
+        train_set, train_loader = get_fashion_mnist(K, N_k, data_dir, batch_size=batch_size, train=True, shuffle=shuffle)
+        _, val_loader = get_fashion_mnist(K, N_k_val, data_dir, batch_size=batch_size, train=False, shuffle=shuffle)
         
         # Loss function
         criterion = getattr(nn, loss_fn)(reduction='sum')
@@ -143,9 +122,9 @@ def main():
         print("Number of trainable parameters = ", num_params)
 
         # Train model
-        optimizer = getattr(torch.optim, opt_type)(model.parameters(), lr=lr, weight_decay=0)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=lr/100)
-        results = train(model, criterion, optimizer, train_loader, val_loader, epochs, device, scheduler=scheduler, return_outs=save_outs)
+        optimizer = torch.optim.SGD(model.parameters(), lr=lr, weight_decay=0)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs * len(train_loader), eta_min=lr/100) # Stepped once per optimizer step
+        results = train(model, criterion, optimizer, train_loader, val_loader, epochs, device, scheduler=scheduler)
 
         # Store results
         all_train_losses[i, :] = results['train_losses']
@@ -153,9 +132,6 @@ def main():
 
         all_val_losses[i, :] = results['val_losses']
         all_val_accs[i, :] = results['val_accs']
-
-        if save_outs:
-            all_outs[i, ...] = np.array(results['all_outs'])
 
 
     # Save results
@@ -170,8 +146,6 @@ def main():
     root_fname = 'compressed_model_subspace_' + str(subspace_type) if compress_ else 'orig_model'
     np.savez(os.path.join(save_dir, root_fname + '_losses'), train_losses=all_train_losses, val_losses=all_val_losses)
     np.savez(os.path.join(save_dir, root_fname + '_accs'), train_accs=all_train_accs, val_accs=all_val_accs)
-    if save_outs:
-        np.savez(os.path.join(save_dir, root_fname + '_outs', outs=all_outs))
 
 
 if __name__ == '__main__':

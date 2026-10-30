@@ -2,14 +2,29 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
-from torchvision.models.vgg import VGG, vgg16, vgg16_bn, VGG16_Weights, VGG16_BN_Weights
+from torchvision.models.vgg import VGG, vgg16, vgg16_bn, VGG16_Weights
 
 
 from copy import deepcopy
 from train_utils import train
-from utils import left_right_inits, left_right_inits_2
+from utils import left_right_inits
 
-from typing import Optional, List
+from typing import Optional
+
+
+class LeakySoftplus(nn.Module):
+    def __init__(self, slope=0.01):
+        super(LeakySoftplus, self).__init__()
+        self.softplus = nn.Softplus()
+        self.slope = slope
+    
+    def forward(self, x: torch.Tensor): 
+        out1 = self.slope * x
+        out2 = (1 - self.slope) * ( self.softplus(x) - torch.log(torch.Tensor([2]).to(x.device)) )
+        return out1 + out2
+    
+
+act_map = {'LeakySoftplus': LeakySoftplus()}
 
 # Change classification head in VGG 
 def _modify_vgg_classifier(model: VGG,
@@ -25,7 +40,10 @@ def _modify_vgg_classifier(model: VGG,
     for (i, m) in enumerate(model.classifier): 
         # Replace all ReLU parts with another activation
         if isinstance(m, nn.ReLU):
-            model.classifier[i] = getattr(nn, activation)()
+            try: 
+                model.classifier[i] = getattr(nn, activation)()
+            except AttributeError: 
+                model.classifier[i] = act_map[activation]
         
         # Re-initialize linear weights so that they are scaled orthogonal matrices
         elif isinstance(m, nn.Linear): 
@@ -70,7 +88,6 @@ def compress_vgg16_classifier(orig_model: VGG,
                               rank: int, 
                               init_method: str,
                               init_scale: float,  
-                              W_0: List[np.ndarray] = None,
                               U1_2r: np.ndarray = None, 
                               V1_2r: np.ndarray = None,
                               pool_size: tuple = (3, 3)) -> VGG:
@@ -98,11 +115,8 @@ def compress_vgg16_classifier(orig_model: VGG,
             # Initialize V factor
             comp_model.classifier[0].weight.copy_(torch.Tensor(V1_2r).transpose(0, 1))
 
-            # Calculate U factor
-            U2_2r = W_0[1] @ U1_2r / init_scale
-            
-            # Initialize U factor
-            comp_model.classifier[5].weight.copy_(torch.Tensor(U2_2r))
+            # Initialize U factor (left_right_inits already propagates V through both hidden layers)
+            comp_model.classifier[5].weight.copy_(torch.Tensor(U1_2r))
 
         # Initialize as random subspaces
         else: 
@@ -134,23 +148,24 @@ def compress_vgg16(orig_model: VGG,
                    criterion: nn.Module,
                    train_set: Dataset, 
                    batch_size: int, 
-                   subspace_type: int, 
-                   device: str, 
+                   subspace_type: str,
+                   device: str,
                    pool_size: tuple = (3, 3)) -> VGG:
-    
+
     # Initialize U and V factors as random subspaces
-    if subspace_type is None:
+    if subspace_type == 'random':
         return compress_vgg16_classifier(orig_model, rank, init_method, init_scale, pool_size=pool_size)
     
     # Calculate subspace where update occurs
     if batch_size is None:
         batch_size = train_set.data.shape[0]
     dummy_loader = DataLoader(train_set, batch_size=batch_size, shuffle=False)
-    dummy_optimizer = torch.optim.SGD(orig_model.parameters())
+    probe_model = deepcopy(orig_model)
+    dummy_optimizer = torch.optim.SGD(probe_model.parameters())
 
     # Subspace type
-    if subspace_type == 1:
-        results = train(orig_model, 
+    if subspace_type == 'gradient':
+        results = train(probe_model,
                         criterion, 
                         dummy_optimizer, 
                         dummy_loader, 
@@ -165,42 +180,15 @@ def compress_vgg16(orig_model: VGG,
         W_0 = results['all_weights'][0]
         G_0 = results['all_grads'][0]
 
-        W1_0 = W_0[0]
         G1_0 = G_0[0]
         
         # Get subspace where "small" updates occur
         U1, V1 = left_right_inits(W_0, G1_0, rank, init_scale)
-    
-    elif subspace_type == 2:
-        results = train(orig_model, 
-                        criterion, 
-                        dummy_optimizer, 
-                        dummy_loader, 
-                        dummy_loader, 
-                        1, 
-                        device, 
-                        num_inner_iter=1,
-                        return_weights=True, 
-                        return_grads=False, 
-                        return_outs=True)
-        
-        # Get input to classifier
-        X_est, Y = next(iter(dummy_loader)) # Data matrix
-        H_est = orig_model.avgpool(orig_model.features(X_est.to(device))) # Inputs to classifier
-        H_est = torch.flatten(H_est, 1).detach().cpu().numpy().T
-
-        # Get labels
-        ZL_0 = results['all_outs'][0].T # Model output of first epoch
-        E_0 = ZL_0 - Y.detach().cpu().numpy().T # Residual
-
-        # Get subspace where "small" updates occur
-        W_0 = results['all_weights'][0]
-        U1, V1 = left_right_inits_2(W_0, E_0, H_est, rank, init_scale)
     
     else:
         raise ValueError("Invalid subspace type.")
 
 
 
-    return compress_vgg16_classifier(orig_model, rank, init_method, init_scale, W_0=W_0, U1_2r=U1, V1_2r=V1, pool_size=pool_size)
+    return compress_vgg16_classifier(orig_model, rank, init_method, init_scale, U1_2r=U1, V1_2r=V1, pool_size=pool_size)
 
