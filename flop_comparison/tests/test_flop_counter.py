@@ -67,6 +67,11 @@ class TestPrimitives:
         assert fc.linear_bwd_flops(8, 16, 32, need_dx=False, need_dw=True) == 8192
         assert fc.linear_bwd_flops(8, 16, 32, need_dx=False, need_dw=False) == 0
 
+    def test_qr_flops(self):
+        assert fc.qr_flops(10, 4) == 554
+        assert fc.qr_flops(4, 10) == 554
+        assert fc.qr_flops(5, 5) == 333
+
     def test_svd_flops(self):
         # 14*m*n^2 + 8*n^3 with m >= n.
         assert fc.svd_flops(10, 4) == 2752
@@ -458,7 +463,8 @@ class TestLTH:
 # 6. DLRT (SPEC coverage item 6)
 # ---------------------------------------------------------------------------
 
-DLRT_ITER_KEYS = {'kl_fwd', 'kl_bwd', 's_fwd', 's_bwd', 'optimizer', 'total'}
+DLRT_ITER_KEYS = {'kl_form', 'kl_fwd', 'kl_bwd', 'qr', 'projection', 's_fwd', 's_bwd',
+                  'svd_truncate', 'optimizer', 'total'}
 
 
 def _dlrt_expected_from_spec(cfg, r, adaptive, B, opt_fpp=2):
@@ -466,26 +472,33 @@ def _dlrt_expected_from_spec(cfg, r, adaptive, B, opt_fpp=2):
     R2 = 2 * r if adaptive else r
     dims = fc.dense_layer_dims(cfg)[:-1]
     d_h, K_cls = cfg.hidden_dim, cfg.num_classes
-    kl_fwd = kl_bwd = s_fwd = s_bwd = 0
+    kl_form = kl_fwd = kl_bwd = qr = projection = s_fwd = s_bwd = svd_trunc = 0
     for i, (out, in_) in enumerate(dims):
         first = (i == 0)
+        kl_form += 2 * out * r ** 2 + 2 * in_ * r ** 2
         kl_fwd += 2 * B * r * in_ + 2 * B * r * out
         if not first:
             kl_bwd += 2 * B * r * out + 2 * B * r * in_
         kl_bwd += 2 * B * out * r                      # dK = dy zhat^T
         kl_bwd += 2 * B * out * r + 2 * B * in_ * r    # dL via w = U^T dy, z w^T
+        qr += int(4 * out * R2 ** 2 - (4 / 3) * R2 ** 3) + \
+            int(4 * in_ * R2 ** 2 - (4 / 3) * R2 ** 3)
+        projection += 2 * (out + in_) * R2 * r + 2 * R2 * r ** 2 + 2 * R2 ** 2 * r
         s_fwd += 2 * B * R2 * in_ + 2 * B * R2 ** 2 + 2 * B * R2 * out
         s_bwd += 2 * B * out * R2 + 2 * B * R2 ** 2
         if not first:
             s_bwd += 2 * B * R2 ** 2 + 2 * B * in_ * R2
+        if adaptive:
+            svd_trunc += 14 * R2 ** 3 + 8 * R2 ** 3 + 2 * (out + in_) * R2 * r
     kl_fwd += 2 * B * d_h * K_cls
     kl_bwd += 2 * B * d_h * K_cls
     s_fwd += 2 * B * d_h * K_cls
     s_bwd += 4 * B * d_h * K_cls
     optimizer = opt_fpp * (sum(o * r + i_ * r + R2 ** 2 for (o, i_) in dims)
                            + d_h * K_cls)
-    d = {'kl_fwd': kl_fwd, 'kl_bwd': kl_bwd, 's_fwd': s_fwd, 's_bwd': s_bwd,
-         'optimizer': optimizer}
+    d = {'kl_form': kl_form, 'kl_fwd': kl_fwd, 'kl_bwd': kl_bwd, 'qr': qr,
+         'projection': projection, 's_fwd': s_fwd, 's_bwd': s_bwd,
+         'svd_truncate': svd_trunc, 'optimizer': optimizer}
     d['total'] = sum(d.values())
     return d
 
@@ -505,14 +518,16 @@ class TestDLRT:
         # depth=2, d=6, d_h=5, K=3, r=2 (R2=4), B=7 -- every component by hand.
         cfg = fc.MLPConfig(depth=2, in_dim=6, hidden_dim=5, num_classes=3)
         got = fc.dlrt_iter_flops(cfg, fc.DLRTConfig(rank=2, adaptive=True), 7)
-        assert got == {'kl_fwd': 518, 'kl_bwd': 658, 's_fwd': 1050, 's_bwd': 924,
-                       'optimizer': 106, 'total': 3256}
+        assert got == {'kl_form': 88, 'kl_fwd': 518, 'kl_bwd': 658, 'qr': 532,
+                       'projection': 272, 's_fwd': 1050, 's_bwd': 924,
+                       'svd_truncate': 1584, 'optimizer': 106, 'total': 5732}
 
     def test_iter_hand_built_fixed_rank_single_low_rank_layer(self):
         cfg = fc.MLPConfig(depth=2, in_dim=6, hidden_dim=5, num_classes=3)
         got = fc.dlrt_iter_flops(cfg, fc.DLRTConfig(rank=2, adaptive=False), 7)
-        assert got == {'kl_fwd': 518, 'kl_bwd': 658, 's_fwd': 574, 's_bwd': 616,
-                       'optimizer': 82, 'total': 2448}
+        assert got == {'kl_form': 88, 'kl_fwd': 518, 'kl_bwd': 658, 'qr': 154,
+                       'projection': 120, 's_fwd': 574, 's_bwd': 616,
+                       'svd_truncate': 0, 'optimizer': 82, 'total': 2810}
 
     def test_iter_spec_formula_depth3_both_variants(self):
         # Exercises the non-first-layer dz paths for adaptive and fixed rank.

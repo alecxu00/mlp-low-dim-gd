@@ -42,6 +42,14 @@ def linear_bwd_flops(batch: int, in_dim: int, out_dim: int, *, need_dx: bool = T
     return total
 
 
+def qr_flops(m: int, n: int) -> int:
+    """Householder QR with thin Q formed explicitly, dims sorted so m >= n:
+    4*m*n^2 - (4/3)*n^3, as int."""
+    if m < n:
+        m, n = n, m
+    return int(4 * m * n**2 - (4 / 3) * n**3)
+
+
 def svd_flops(m: int, n: int) -> int:
     """Economy SVD with both singular-vector matrices (Golub-Van Loan, Golub-Reinsch),
     dims sorted so m >= n: 14*m*n^2 + 8*n^3, as int (SPEC `svd_flops`)."""
@@ -298,9 +306,10 @@ def dlrt_iter_flops(cfg, dcfg, batch: int, opt_flops_per_param: int = 2) -> dict
     d_h = cfg.hidden_dim
     dims = _dlrt_low_rank_dims(cfg)
 
-    kl_fwd = kl_bwd = s_fwd = s_bwd = 0
+    kl_form = kl_fwd = kl_bwd = qr = projection = s_fwd = s_bwd = svd_trunc = 0
     for i, (out, in_) in enumerate(dims):
         first = (i == 0)
+        kl_form += 2 * out * r**2 + 2 * in_ * r**2
         # One factored forward serving both K and L tapes.
         kl_fwd += 2 * B * r * in_ + 2 * B * r * out
         # K/L backward: dz propagation (K^T dy then V(.)), dK = dy zhat^T, dL via U^T dy.
@@ -308,12 +317,17 @@ def dlrt_iter_flops(cfg, dcfg, batch: int, opt_flops_per_param: int = 2) -> dict
             kl_bwd += 2 * B * r * out + 2 * B * r * in_
         kl_bwd += 2 * B * out * r                       # dK
         kl_bwd += 2 * B * out * r + 2 * B * in_ * r     # dL
+        qr += qr_flops(out, R2) + qr_flops(in_, R2)
+        projection += 2 * out * R2 * r + 2 * in_ * R2 * r
+        projection += 2 * R2 * r * r + 2 * R2 * r * R2
         # S-step forward at rank R2.
         s_fwd += 2 * B * R2 * in_ + 2 * B * R2**2 + 2 * B * R2 * out
         # S-step backward: w = U^T dy, dS = w zhat^T, dz propagation (skip first layer).
         s_bwd += 2 * B * out * R2 + 2 * B * R2**2
         if not first:
             s_bwd += 2 * B * R2**2 + 2 * B * in_ * R2
+        if dcfg.adaptive:
+            svd_trunc += svd_flops(R2, R2) + 2 * out * R2 * r + 2 * in_ * R2 * r
 
     # Dense last layer joins each pass: forward in both tapes, dx in the K/L backward,
     # dx + dW in the S-step backward (its dW is counted there).
@@ -325,7 +339,8 @@ def dlrt_iter_flops(cfg, dcfg, batch: int, opt_flops_per_param: int = 2) -> dict
     optimizer = opt_flops_per_param * (
         sum(out * r + in_ * r + R2**2 for (out, in_) in dims) + d_h * K_cls)
 
-    out_dict = {'kl_fwd': kl_fwd, 'kl_bwd': kl_bwd, 's_fwd': s_fwd, 's_bwd': s_bwd,
-                'optimizer': optimizer}
+    out_dict = {'kl_form': kl_form, 'kl_fwd': kl_fwd, 'kl_bwd': kl_bwd, 'qr': qr,
+                'projection': projection, 's_fwd': s_fwd, 's_bwd': s_bwd,
+                'svd_truncate': svd_trunc, 'optimizer': optimizer}
     out_dict['total'] = sum(out_dict.values())
     return out_dict

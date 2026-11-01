@@ -19,9 +19,10 @@ trained in `mlp/train_mlp.py`.
 - Linear backward: dx GEMM `2*B*in*out`, **skipped whenever the layer input requires no
   gradient**.
 - Optimizer: 2 FLOPs per trainable param per iteration (plain SGD)
+- Householder QR with thin Q formed (m >= n): `4*m*n^2 - (4/3)*n^3`.
 - Economy SVD with both singular-vector matrices (Golub–Van Loan): `14*m*n^2 + 8*n^3`.
-- Not counted: building initial weights (orthogonal-init QR), the LTH magnitude-prune
-  sort, and DLRT's per-step overhead (K/L forming, QRs, basis projections, rank-truncation SVD).
+- Not counted: building initial weights (orthogonal-init QR) and the LTH magnitude-prune
+  sort.
 - Every breakdown dict carries a `'total'` key equal to the sum of its other entries.
 
 ## Results
@@ -31,8 +32,8 @@ trained in `mlp/train_mlp.py`.
 | Dense                                  | 1,237,152 | N/A | 1.59e+09 |
 | Subspace                               | 40,000    | 1.99e+10 | 5.35e+07 |
 | LTH (one-shot, p=0.9677)               | 40,001    | 1.59e+09·T | 5.13e+07 |
-| DLRT (adaptive, r=10, warm start)      | 39,400    | 2.12e+10 | 1.26e+08 |
-| DLRT (fixed-rank, r=10, warm start)    | 39,400    | 2.12e+10 | 9.67e+07 |
+| DLRT (adaptive, r=10, warm start)      | 39,400    | 2.12e+10 | 1.34e+08 |
+| DLRT (fixed-rank, r=10, warm start)    | 39,400    | 2.12e+10 | 9.92e+07 |
 
 Config: `L=3, d=d_h=784, K=10, N=B=256`. Regenerate with the command below. It prints the LTH init at T = `--lth_iters_per_round`, which defaults to 1.
 
@@ -71,7 +72,11 @@ cd scripts && sbatch run_flop_comparison.sh    # or: bash run_flop_comparison.sh
   `LTHConfig(theoretical_sparsity=False)` for that cost model (full dense fwd/bwd + one
   mask multiply per weight).
 - **DLRT constants** follow the paper's Algorithm 1 with the K- and L-step sharing one
-  factored forward pass; bias updates are omitted (bias=False everywhere here).
+  factored forward pass; bias updates are omitted (bias=False everywhere here). Each step
+  also counts, per low-rank layer, forming K = US and L = VS^T, one QR per factor basis
+  (`n x 2r` augmented bases when adaptive, `n x r` when fixed-rank), the basis projections
+  M = U_new^T U_old, N = V_new^T V_old and M S N^T, and, adaptive only, the rank
+  truncation: the `2r x 2r` SVD of S plus the U P~ and V Q~ basis products.
 - **The repo's U/V factors train** (the logged 40,400-param runs); `compare.py` also
   reports a frozen-factor variant as a separate row, not shown in the table above. In the frozen variant the
   first core's dx GEMM is skipped (matching PyTorch autograd exactly — verified against
